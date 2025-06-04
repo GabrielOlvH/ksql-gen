@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="SqlDialectMappings">
+    <file url="file://$PROJECT_DIR$/src/test/resources/db/chat.sql" dialect="PostgreSQL" />
+    <file url="file://$PROJECT_DIR$/src/test/resources/db/members.sql" dialect="PostgreSQL" />
+    <file url="file://$PROJECT_DIR$/src/test/resources/db/organizations.sql" dialect="PostgreSQL" />
+    <file url="file://$PROJECT_DIR$/src/test/resources/db/purchase_orders.sql" dialect="PostgreSQL" />
+    <file url="file://$PROJECT_DIR$/src/test/resources/db/sale_orders.sql" dialect="PostgreSQL" />
+    <file url="file://$PROJECT_DIR$/src/test/resources/db/sequence_manager.sql" dialect="PostgreSQL" />
+    <file url="file://$PROJECT_DIR$/src/test/resources/db/stock_products.sql" dialect="PostgreSQL" />
+    <file url="file://$PROJECT_DIR$/src/test/resources/db/suppliers.sql" dialect="PostgreSQL" />
+    <file url="file://$PROJECT_DIR$/src/test/resources/schema.sql" dialect="GenericSQL" />
+  </component>
+</project>

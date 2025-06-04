@@ -41,5 +41,7 @@ bin/
 ### VS Code ###
 .vscode/
 
+/docs
+
 ### Mac OS ###
 .DS_Store
