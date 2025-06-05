@@ -57,7 +57,8 @@ object PathManager {
         TABLE_METADATA, // Table metadata objects
         QUERIES,        // Query builder classes
         RELATIONSHIPS,  // Relationship definitions
-        SCHEMA_METADATA // Schema-wide metadata
+        SCHEMA_METADATA,// Schema-wide metadata
+        RESULTSET_EXTENSIONS // ResultSet parsing extensions
     }
     
     /**
@@ -133,6 +134,7 @@ object PathManager {
                     FileCategory.TABLE_METADATA -> "$basePackageName.tables"
                     FileCategory.QUERIES -> "$basePackageName.queries"
                     FileCategory.RELATIONSHIPS -> "$basePackageName.relationships"
+                    FileCategory.RESULTSET_EXTENSIONS -> "$basePackageName.resultset"
                     FileCategory.SCHEMA_METADATA -> basePackageName
                 }
                 val packagePath = createPackageDirectories(baseOutputDir, typePackage)
@@ -151,6 +153,7 @@ object PathManager {
                         FileCategory.TABLE_METADATA -> "$basePackageName.tables"
                         FileCategory.QUERIES -> "$basePackageName.queries"
                         FileCategory.RELATIONSHIPS -> "$basePackageName.relationships"
+                        FileCategory.RESULTSET_EXTENSIONS -> "$basePackageName.resultset"
                         else -> basePackageName
                     }
                     val packagePath = createPackageDirectories(baseOutputDir, typePackage)
@@ -267,7 +270,7 @@ object PathManager {
             // Create directories for each organization strategy
             when (config.organizationStrategy) {
                 OrganizationStrategy.TYPE_BASED -> {
-                    val typeDirs = listOf("entities", "keys", "tables", "queries", "relationships")
+                    val typeDirs = listOf("entities", "keys", "tables", "queries", "relationships", "resultset")
                     typeDirs.forEach { type ->
                         val typePackage = "$basePackageName.$type"
                         createPackageDirectories(baseOutputDir, typePackage)
@@ -275,7 +278,7 @@ object PathManager {
                     }
                 }
                 OrganizationStrategy.HYBRID -> {
-                    val typeDirs = listOf("keys", "tables", "queries", "relationships")
+                    val typeDirs = listOf("keys", "tables", "queries", "relationships", "resultset")
                     typeDirs.forEach { type ->
                         val typePackage = "$basePackageName.$type"
                         createPackageDirectories(baseOutputDir, typePackage)

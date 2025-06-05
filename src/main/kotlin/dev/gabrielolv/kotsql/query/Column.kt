@@ -101,10 +101,10 @@ sealed class WhereCondition<T> {
                 "${column.name} != ?"
             }
             is In -> {
-                val placeholders = values.map {
+                val placeholders = values.joinToString(", ") {
                     parameterCollector.add(it)
                     "?"
-                }.joinToString(", ")
+                }
                 "${column.name} IN ($placeholders)"
             }
             is IsNotNull -> "${column.name} IS NOT NULL"

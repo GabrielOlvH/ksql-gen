@@ -7,6 +7,7 @@ A comprehensive **Kotlin Symbol Processing (KSP)** tool that automatically gener
 ### **Core Functionality (Phases 1-4)**
 - **SQL Schema Parsing**: Automatically parse CREATE TABLE statements from SQL files
 - **Kotlin Data Class Generation**: Generate `@Serializable` data classes with proper type mapping
+- **ResultSet Parsing**: ✨ **NEW** Automatic JDBC ResultSet to data class conversion utilities
 - **Column Constants**: Create typed column references for type-safe queries
 - **Type-Safe Query Builder**: Fluent API for building SQL queries with compile-time validation
 
@@ -177,6 +178,51 @@ val userPostsQuery = UsersMetadata.joinQuery()
 val postCategoriesQuery = PostsMetadata.joinQuery()
     .manyToManyJoin(PostsMetadata.Relationships.postCategories, "c")
     .where(CategoriesMetadata.Columns.name eq "Technology")
+```
+
+### ResultSet Parsing ✨ **NEW**
+
+```kotlin
+import java.sql.DriverManager
+
+// Parse single row
+fun getUserById(id: Int): Users? {
+    val connection = DriverManager.getConnection("jdbc:h2:mem:test")
+    connection.prepareStatement(Users.selectByIdQuery()).use { stmt ->
+        stmt.setInt(1, id)
+        return Users.fromQuery(stmt)
+    }
+}
+
+// Parse multiple rows
+fun getAllUsers(): List<Users> {
+    val connection = DriverManager.getConnection("jdbc:h2:mem:test")
+    connection.prepareStatement(Users.selectAllQuery()).use { stmt ->
+        return Users.listFromQuery(stmt)
+    }
+}
+
+// Using extension methods for custom queries
+fun getUsersByAge(minAge: Int): List<Users> {
+    val connection = DriverManager.getConnection("jdbc:h2:mem:test")
+    val sql = "SELECT * FROM users WHERE age >= ?"
+    connection.prepareStatement(sql).use { stmt ->
+        stmt.setInt(1, minAge)
+        stmt.executeQuery().use { rs ->
+            return rs.toUsersList()
+        }
+    }
+}
+
+// Memory-efficient sequence processing
+fun processAllUsers(processor: (Users) -> Unit) {
+    val connection = DriverManager.getConnection("jdbc:h2:mem:test")
+    connection.prepareStatement("SELECT * FROM users").use { stmt ->
+        stmt.executeQuery().use { rs ->
+            rs.toUsersSequence().forEach(processor)
+        }
+    }
+}
 ```
 
 ### Validation

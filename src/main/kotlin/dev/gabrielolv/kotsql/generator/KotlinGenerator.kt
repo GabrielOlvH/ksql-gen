@@ -277,6 +277,57 @@ class KotlinGenerator {
     }
     
     /**
+     * Generate ResultSet extension file content
+     */
+    fun generateResultSetExtensionsFile(
+        context: FileManager.TableGenerationContext,
+        config: PathManager.PathConfig
+    ): String {
+        val table = context.table
+        val className = NamingConventions.tableNameToClassName(table.tableName)
+        val packageName = context.packageName
+        
+        return buildString {
+            // Add file header if configured
+            if (config.includeTimestamps) {
+                append(GenerationMetadata.generateFileHeader("ResultSet extensions for ${table.tableName}"))
+                appendLine()
+            }
+            
+            // Package declaration
+            appendLine("package $packageName")
+            appendLine()
+            
+            // Imports
+            val resultSetImports = ResultSetGenerator.getRequiredImports()
+            val typeImports = ImportGenerator.generateEntityImports(table, false, false, config)
+            val allImports = (resultSetImports + typeImports).sorted()
+            
+            allImports.forEach { import ->
+                appendLine("import $import")
+            }
+            if (allImports.isNotEmpty()) {
+                appendLine()
+            }
+            
+            // ResultSet utility functions
+            append(ResultSetGenerator.generateResultSetUtilities())
+            
+            // ResultSet extensions for entity
+            append(ResultSetGenerator.generateResultSetExtensions(table, className))
+            
+            // ResultSet extensions for composite key (if applicable)
+            if (table.hasCompositePrimaryKey) {
+                val keyClassName = "${className}Key"
+                append(ResultSetGenerator.generateKeyResultSetExtensions(table, keyClassName))
+            }
+            
+            // Companion object methods
+            append(ResultSetGenerator.generateResultSetCompanion(table, className))
+        }
+    }
+
+    /**
      * Compatibility method for tests - generates monolithic files for multiple tables
      */
     fun generateAllDataClasses(

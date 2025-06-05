@@ -220,6 +220,25 @@ class FileManager(
             )
             generatedFiles.add(queryFile)
         }
+        
+        // Generate ResultSet extensions
+        val (resultSetPackageName, _) = PathManager.getOutputDirectory(
+            config = config,
+            basePackageName = context.packageName,
+            tableName = table.tableName,
+            category = PathManager.FileCategory.RESULTSET_EXTENSIONS
+        )
+        val resultSetContext = context.copy(packageName = resultSetPackageName)
+        val resultSetContent = generateResultSetExtensionsContent(resultSetContext)
+        val resultSetFile = PathManager.createGeneratedFile(
+            config = config,
+            basePackageName = context.packageName,
+            fileName = "${className}Extensions",
+            content = resultSetContent,
+            tableName = table.tableName,
+            category = PathManager.FileCategory.RESULTSET_EXTENSIONS
+        )
+        generatedFiles.add(resultSetFile)
     }
     
     /**
@@ -461,5 +480,9 @@ class FileManager(
         relationships: SchemaRelationships?
     ): String {
         return generator.generateSchemaMetadataFile(basePackageName, tables, relationships, config)
+    }
+    
+    private fun generateResultSetExtensionsContent(context: TableGenerationContext): String {
+        return generator.generateResultSetExtensionsFile(context, config)
     }
 } 

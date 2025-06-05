@@ -48,7 +48,7 @@ object EntityGenerator {
             appendLine()
             append(")")
             
-            // Add class body if needed for composite keys
+            // Add class body for composite key methods only
             if (table.hasCompositePrimaryKey) {
                 appendLine(" {")
                 appendLine()
@@ -69,7 +69,7 @@ object EntityGenerator {
                 appendLine(")")
                 appendLine()
                 
-                // Add companion object with fromKey method
+                // Add companion object with fromKey method only
                 appendLine("    companion object {")
                 appendLine("        /**")
                 appendLine("         * Create an instance from a composite key with default values for non-key columns")
