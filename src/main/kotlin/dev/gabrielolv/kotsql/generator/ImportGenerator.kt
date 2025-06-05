@@ -19,7 +19,9 @@ object ImportGenerator {
         table: SQLTableInfo,
         includeValidation: Boolean,
         includeRelationships: Boolean,
-        config: PathManager.PathConfig
+        config: PathManager.PathConfig,
+        relationships: SchemaRelationships? = null,
+        currentPackage: String? = null
     ): List<String> {
         val imports = mutableSetOf<String>()
         
@@ -40,7 +42,7 @@ object ImportGenerator {
             when (config.organizationStrategy) {
                 PathManager.OrganizationStrategy.TYPE_BASED -> {
                     // Key is in separate package, need import
-                    imports.add("${getBasePackage(config)}.keys.${NamingConventions.tableNameToClassName(table.tableName)}Key")
+                    imports.add("${getBasePackage(config, currentPackage)}.keys.${NamingConventions.tableNameToClassName(table.tableName)}Key")
                 }
                 PathManager.OrganizationStrategy.FLAT -> {
                     // Key is in same package, no import needed
@@ -70,10 +72,43 @@ object ImportGenerator {
         }
         
         // Add relationship imports if enabled
-        if (includeRelationships) {
+        if (includeRelationships && relationships != null) {
+            // Add imports for related entity classes
+            val allRelatedTables = mutableSetOf<String>()
+            
+            // Get outgoing relationships (this table references others)
+            relationships.getOutgoingRelationships(table.tableName).forEach { rel ->
+                allRelatedTables.add(rel.toTable)
+            }
+            
+            // Get incoming relationships (other tables reference this table)
+            relationships.getIncomingRelationships(table.tableName).forEach { rel ->
+                allRelatedTables.add(rel.fromTable)
+            }
+            
+            // Add imports for related entity classes based on organization strategy
+            allRelatedTables.forEach { relatedTable ->
+                val relatedClassName = NamingConventions.tableNameToClassName(relatedTable)
+                when (config.organizationStrategy) {
+                    PathManager.OrganizationStrategy.TYPE_BASED -> {
+                        imports.add("${getBasePackage(config, currentPackage)}.entities.$relatedClassName")
+                    }
+                    PathManager.OrganizationStrategy.FEATURE_BASED -> {
+                        imports.add("${getBasePackage(config, currentPackage)}.${relatedTable.lowercase()}.$relatedClassName")
+                    }
+                    PathManager.OrganizationStrategy.HYBRID -> {
+                        imports.add("${getBasePackage(config, currentPackage)}.${relatedTable.lowercase()}.$relatedClassName")
+                    }
+                    PathManager.OrganizationStrategy.FLAT -> {
+                        // Same package, no import needed
+                    }
+                }
+            }
+            
+            // Add relationship framework imports
             when (config.organizationStrategy) {
                 PathManager.OrganizationStrategy.TYPE_BASED -> {
-                    imports.add("${getBasePackage(config)}.relationships.TableRelationships")
+                    imports.add("${getBasePackage(config, currentPackage)}.relationships.TableRelationships")
                 }
                 else -> {
                     // Relationships in same or accessible package
@@ -217,12 +252,44 @@ object ImportGenerator {
     /**
      * Generate imports for schema metadata files
      */
-    fun generateSchemaMetadataImports(): List<String> {
-        return listOf(
-            "dev.gabrielolv.kotsql.schema.SchemaVersion",
-            "dev.gabrielolv.kotsql.model.SchemaRelationships",
-            "kotlinx.datetime.Instant"
-        )
+    fun generateSchemaMetadataImports(
+        tables: List<SQLTableInfo>,
+        packageName: String,
+        config: PathManager.PathConfig
+    ): List<String> {
+        val imports = mutableSetOf<String>()
+        
+        imports.add("dev.gabrielolv.kotsql.schema.SchemaVersion")
+        imports.add("dev.gabrielolv.kotsql.model.SchemaRelationships")
+        imports.add("kotlinx.datetime.Instant")
+        
+        // Add imports for entity classes based on organization strategy
+        tables.forEach { table ->
+            val className = NamingConventions.tableNameToClassName(table.tableName)
+            when (config.organizationStrategy) {
+                PathManager.OrganizationStrategy.TYPE_BASED -> {
+                    // Entities are in a separate entities package
+                    val basePackage = packageName.substringBeforeLast('.', packageName)
+                    imports.add("$basePackage.entities.$className")
+                }
+                PathManager.OrganizationStrategy.HYBRID -> {
+                    // Entity is in feature package
+                    val basePackage = packageName.substringBeforeLast('.', packageName)
+                    imports.add("$basePackage.${table.tableName.lowercase()}.$className")
+                }
+                PathManager.OrganizationStrategy.FEATURE_BASED -> {
+                    // Everything should be in the same package, but might need import
+                    if (!packageName.contains(table.tableName.lowercase())) {
+                        imports.add("$packageName.${table.tableName.lowercase()}.$className")
+                    }
+                }
+                PathManager.OrganizationStrategy.FLAT -> {
+                    // Everything is in the same package, no imports needed
+                }
+            }
+        }
+        
+        return imports.sorted()
     }
     
     /**
@@ -281,8 +348,14 @@ object ImportGenerator {
     /**
      * Extract base package from configuration
      */
-    private fun getBasePackage(config: PathManager.PathConfig): String {
-        // This would need to be passed in properly, for now return placeholder
-        return "com.example.data"
+    private fun getBasePackage(config: PathManager.PathConfig, currentPackage: String? = null): String {
+        // Extract base package from current package or use config
+        return when {
+            currentPackage != null -> {
+                // Remove the last segment to get the base package
+                currentPackage.substringBeforeLast('.', currentPackage)
+            }
+            else -> "dev.gabrielolv.generated" // fallback
+        }
     }
 } 

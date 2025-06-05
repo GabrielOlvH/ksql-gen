@@ -47,6 +47,39 @@ object TableMetadataGenerator {
                 appendLine("        val $constantName = Column<$kotlinType>(\"${column.columnName}\")")
             }
             appendLine("    }")
+            appendLine()
+            
+            // Prefixed column definitions for JOIN queries
+            appendLine("    object PrefixedColumns {")
+            table.columns.forEach { column ->
+                val propertyName = NamingConventions.columnNameToPropertyName(column.columnName)
+                val constantName = propertyName.uppercase()
+                val kotlinType = TypeMapper.mapToKotlinType(column).removeSuffix("?") // Remove nullable marker for type parameter
+                appendLine("        val $constantName = Column<$kotlinType>(\"${table.tableName}.${column.columnName}\")")
+            }
+            appendLine("    }")
+            appendLine()
+            
+            // Column shortcuts - TableName.ColumnName as shortcuts to TableName.Columns.COLUMN_NAME
+            appendLine("    // Column shortcuts for convenient access")
+            table.columns.forEach { column ->
+                val propertyName = NamingConventions.columnNameToPropertyName(column.columnName)
+                val constantName = propertyName.uppercase()
+                // Convert to Pascal case: first_name -> firstName -> FirstName
+                val shortcutName = propertyName.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                appendLine("    val $shortcutName get() = Columns.$constantName")
+            }
+            appendLine()
+            
+            // Prefixed column shortcuts for JOIN queries
+            appendLine("    // Prefixed column shortcuts for JOIN queries")
+            table.columns.forEach { column ->
+                val propertyName = NamingConventions.columnNameToPropertyName(column.columnName)
+                val constantName = propertyName.uppercase()
+                // Convert to Pascal case: first_name -> firstName -> FirstName, but with prefix
+                val shortcutName = "Prefixed" + propertyName.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                appendLine("    val $shortcutName get() = PrefixedColumns.$constantName")
+            }
             
             // Relationships if present
             if (relationships != null) {
@@ -58,7 +91,9 @@ object TableMetadataGenerator {
                     appendLine()
                     appendLine("    object Relationships {")
                     tableRelationships.forEach { relationship ->
-                        val relationshipName = "${relationship.fromTable}_${relationship.toTable}"
+                        val fromTableName = NamingConventions.tableNameToPropertyName(relationship.fromTable)
+                        val toTableName = NamingConventions.tableNameToClassName(relationship.toTable)
+                        val relationshipName = "${fromTableName}To${toTableName}"
                         val relationshipType = when (relationship) {
                             is RelationshipInfo.OneToOne -> "OneToOne"
                             is RelationshipInfo.OneToMany -> "OneToMany"

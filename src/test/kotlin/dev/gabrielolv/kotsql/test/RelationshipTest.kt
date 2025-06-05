@@ -152,9 +152,9 @@ class RelationshipTest {
         )
         
         val joinQuery = JoinQuery.from<Any>("posts")
-            .innerJoin<Any>(relationship, "u")
+            .innerJoin(relationship)
             .where(postTitleColumn like "%kotlin%")
-            .orderBy("u", userIdColumn)
+            .orderBy("users", userIdColumn)
             .limit(10)
         
         val result = joinQuery.build()
@@ -162,10 +162,10 @@ class RelationshipTest {
         println("Generated JOIN SQL:")
         println(result.sql)
         
-        assertTrue(result.sql.contains("INNER JOIN users AS u"), "Should generate INNER JOIN")
+        assertTrue(result.sql.contains("INNER JOIN users"), "Should generate INNER JOIN")
         assertTrue(result.sql.contains("ON posts.user_id = users.id"), "Should generate correct ON condition")
         assertTrue(result.sql.contains("WHERE title LIKE ?"), "Should include WHERE condition")
-        assertTrue(result.sql.contains("ORDER BY u.id"), "Should include ORDER BY with alias")
+        assertTrue(result.sql.contains("ORDER BY users.id"), "Should include ORDER BY with table name")
         assertTrue(result.sql.contains("LIMIT 10"), "Should include LIMIT")
     }
     
@@ -185,7 +185,7 @@ class RelationshipTest {
         )
         
         val joinQuery = JoinQuery.from<Any>("posts")
-            .manyToManyJoin<Any>(manyToManyRelationship, "c")
+            .manyToManyJoin(manyToManyRelationship)
             .where(categoryNameColumn eq "Technology")
             .orderBy(postIdColumn)
         
@@ -195,7 +195,7 @@ class RelationshipTest {
         println(result.sql)
         
         assertTrue(result.sql.contains("INNER JOIN post_categories"), "Should join junction table")
-        assertTrue(result.sql.contains("INNER JOIN categories AS c"), "Should join target table")
+        assertTrue(result.sql.contains("INNER JOIN categories"), "Should join target table")
         assertTrue(result.sql.contains("posts.id = post_categories.post_id"), "Should link to junction")
         assertTrue(result.sql.contains("post_categories.category_id = categories.id"), "Should link from junction")
     }
@@ -214,18 +214,18 @@ class RelationshipTest {
         )
         
         val joinQuery = JoinQuery.from<Any>("posts")
-            .leftJoin<Any>(relationship, "u")
+            .leftJoin(relationship)
         
         val result = joinQuery.select(
             ColumnSelection("posts", postTitleColumn),
-            ColumnSelection("u", userNameColumn)
+            ColumnSelection("users", userNameColumn)
         )
         
         println("Generated SELECT specific columns SQL:")
         println(result.sql)
         
-        assertTrue(result.sql.contains("SELECT posts.title, u.username"), "Should select specific columns")
-        assertTrue(result.sql.contains("LEFT JOIN users AS u"), "Should use LEFT JOIN")
+        assertTrue(result.sql.contains("SELECT posts.title, users.username"), "Should select specific columns")
+        assertTrue(result.sql.contains("LEFT JOIN users"), "Should use LEFT JOIN")
     }
     
     @Test

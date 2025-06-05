@@ -39,7 +39,7 @@ class KotlinGenerator {
             appendLine()
             
             // Imports
-            val imports = ImportGenerator.generateEntityImports(table, context.includeValidation, context.relationships != null, config)
+            val imports = ImportGenerator.generateEntityImports(table, context.includeValidation, context.relationships != null, config, context.relationships, packageName)
             imports.forEach { import ->
                 appendLine("import $import")
             }
@@ -213,7 +213,7 @@ class KotlinGenerator {
             appendLine()
             
             // Imports
-            val imports = ImportGenerator.generateSchemaMetadataImports()
+            val imports = ImportGenerator.generateSchemaMetadataImports(tables, packageName, config)
             imports.forEach { import ->
                 appendLine("import $import")
             }
@@ -243,7 +243,7 @@ class KotlinGenerator {
             // Generate all imports needed for a monolithic file
             val allImports = ImportGenerator.generateMonolithicImports(table, includeValidation, relationships != null)
             
-            allImports.sorted().forEach { import ->
+            allImports.distinct().sorted().forEach { import ->
                 appendLine("import $import")
             }
             if (allImports.isNotEmpty()) {
@@ -299,9 +299,9 @@ class KotlinGenerator {
             appendLine()
             
             // Imports
-            val resultSetImports = ResultSetGenerator.getRequiredImports()
-            val typeImports = ImportGenerator.generateEntityImports(table, false, false, config)
-            val allImports = (resultSetImports + typeImports).sorted()
+            val resultSetImports = ResultSetGenerator.getRequiredImports(table, context.relationships)
+            val typeImports = ImportGenerator.generateEntityImports(table, false, context.relationships != null, config, context.relationships, packageName)
+            val allImports = (resultSetImports + typeImports).distinct().sorted()
             
             allImports.forEach { import ->
                 appendLine("import $import")
@@ -314,7 +314,7 @@ class KotlinGenerator {
             append(ResultSetGenerator.generateResultSetUtilities())
             
             // ResultSet extensions for entity
-            append(ResultSetGenerator.generateResultSetExtensions(table, className))
+            append(ResultSetGenerator.generateResultSetExtensions(table, className, context.relationships, context.allTables))
             
             // ResultSet extensions for composite key (if applicable)
             if (table.hasCompositePrimaryKey) {

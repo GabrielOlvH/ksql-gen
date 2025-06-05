@@ -4,26 +4,28 @@ A comprehensive **Kotlin Symbol Processing (KSP)** tool that automatically gener
 
 ## 🚀 Features
 
-### **Core Functionality (Phases 1-4)**
+### **Core Functionality**
 - **SQL Schema Parsing**: Automatically parse CREATE TABLE statements from SQL files
 - **Kotlin Data Class Generation**: Generate `@Serializable` data classes with proper type mapping
-- **ResultSet Parsing**: ✨ **NEW** Automatic JDBC ResultSet to data class conversion utilities
+- **ResultSet Parsing**: Automatic JDBC ResultSet to data class conversion utilities with smart relationship detection
 - **Column Constants**: Create typed column references for type-safe queries
 - **Type-Safe Query Builder**: Fluent API for building SQL queries with compile-time validation
 
-### **Phase 5: Validation Framework**
+### **Validation Framework**
 - **Automatic Validation Annotations**: Maps SQL constraints to Kotlin validation annotations
 - **Runtime Validation Engine**: Reflection-based validation with detailed error reporting
 - **Smart Pattern Detection**: Detects emails, usernames, phone numbers from SQL patterns
 - **Validation Helper Methods**: Generated validation utilities for each data class
 
-### **Phase 6: Relationship Mapping**
-- **Automatic Relationship Detection**: Identifies foreign keys and table relationships
+### **Relationship Mapping**
+- **Automatic Relationship Detection**: Identifies foreign keys and table relationships from SQL schema
+- **Smart Entity Generation**: Generates relationship properties in entities (One-to-Many, Many-to-One, Many-to-Many)
+- **Intelligent ResultSet Parsing**: Automatically detects joined tables in ResultSets and populates relationships
+- **Bidirectional Relationships**: Generates both directions of relationships with proper naming conventions
 - **JOIN Query Support**: Type-safe JOIN operations with relationship-based queries
-- **Many-to-Many Support**: Junction table detection and many-to-many relationship handling
-- **Bidirectional Relationships**: Generates both directions of One-to-Many/Many-to-One relationships
+- **Junction Table Support**: Many-to-many relationship handling through junction tables
 
-### **Phase 7: Schema Validation** ✨ **NEW**
+### **Schema Validation**
 - **Schema Evolution Tracking**: Compare schema versions and detect changes
 - **Breaking Change Detection**: Identifies backward compatibility issues
 - **Automatic Migration Generation**: Creates SQL migration scripts for schema changes
@@ -61,11 +63,11 @@ ksp {
     arg("sqlSchemaPath", "src/main/resources/schema.sql")
     arg("targetPackage", "dev.gabrielolv.generated")
     arg("enableValidation", "true")           // Enable validation framework
-    arg("enableRelationships", "true")        // Enable relationship detection
-    arg("enableSchemaValidation", "true")     // Enable schema validation ✨ NEW
-    arg("generateMigrations", "true")         // Generate migration scripts ✨ NEW
-    arg("migrationOutputPath", "migrations")  // Directory for migrations ✨ NEW
-    // arg("previousSchemaPath", "src/main/resources/previous_schema.sql") // For comparison ✨ NEW
+    arg("enableRelationships", "true")        // Enable relationship detection and smart ResultSet parsing
+    arg("enableSchemaValidation", "true")     // Enable schema validation
+    arg("generateMigrations", "true")         // Generate migration scripts
+    arg("migrationOutputPath", "migrations")  // Directory for migrations
+    // arg("previousSchemaPath", "src/main/resources/previous_schema.sql") // For comparison
 }
 ```
 
@@ -76,11 +78,11 @@ ksp {
 | `sqlSchemaPath` | `src/main/resources/schema.sql` | Path to SQL schema file |
 | `targetPackage` | `generated` | Target package for generated classes |
 | `enableValidation` | `true` | Enable validation annotations and engine |
-| `enableRelationships` | `true` | Enable relationship detection and JOINs |
-| `enableSchemaValidation` | `true` | ✨ Enable schema validation and tracking |
-| `generateMigrations` | `false` | ✨ Generate migration scripts |
-| `migrationOutputPath` | `migrations` | ✨ Directory for migration files |
-| `previousSchemaPath` | `null` | ✨ Previous schema for comparison |
+| `enableRelationships` | `true` | Enable relationship detection, entity properties, and smart ResultSet parsing |
+| `enableSchemaValidation` | `true` | Enable schema validation and tracking |
+| `generateMigrations` | `false` | Generate migration scripts |
+| `migrationOutputPath` | `migrations` | Directory for migration files |
+| `previousSchemaPath` | `null` | Previous schema for comparison |
 
 ## 📝 Usage Examples
 
@@ -124,8 +126,16 @@ data class Users(
     @Length(max = 50) @NotBlank val username: String,
     @Email @Length(max = 100) val email: String,
     @Range(min = 0) val age: Int?,
-    val createdAt: Instant?
-)
+    val createdAt: Instant?,
+    
+    // Relationship properties (automatically generated)
+    val posts: List<Posts> = emptyList(),  // One-to-Many: Users -> Posts
+    val userProfiles: UserProfiles? = null  // One-to-One: Users -> UserProfiles
+) {
+    // Relationship helper methods
+    fun hasPosts(): Boolean = posts.isNotEmpty()
+    fun hasUserProfiles(): Boolean = userProfiles != null
+}
 
 object UsersMetadata {
     const val TABLE_NAME = "users"
@@ -180,7 +190,9 @@ val postCategoriesQuery = PostsMetadata.joinQuery()
     .where(CategoriesMetadata.Columns.name eq "Technology")
 ```
 
-### ResultSet Parsing ✨ **NEW**
+### Smart ResultSet Parsing with Relationship Detection
+
+KotSQL automatically detects when your ResultSet contains joined table data and populates relationship properties accordingly:
 
 ```kotlin
 import java.sql.DriverManager
@@ -202,14 +214,19 @@ fun getAllUsers(): List<Users> {
     }
 }
 
-// Using extension methods for custom queries
-fun getUsersByAge(minAge: Int): List<Users> {
+// Smart JOIN queries with automatic relationship population
+fun getUsersWithPosts(): List<Users> {
     val connection = DriverManager.getConnection("jdbc:h2:mem:test")
-    val sql = "SELECT * FROM users WHERE age >= ?"
+    val sql = """
+        SELECT u.*, p.id as post_id, p.title as post_title, p.content as post_content 
+        FROM users u 
+        LEFT JOIN posts p ON u.id = p.user_id 
+        ORDER BY u.id, p.id
+    """
     connection.prepareStatement(sql).use { stmt ->
-        stmt.setInt(1, minAge)
         stmt.executeQuery().use { rs ->
-            return rs.toUsersList()
+            // Automatically detects joined posts and populates Users.posts property
+            return rs.toUsersList()  // Users objects will have their posts populated!
         }
     }
 }
@@ -224,6 +241,121 @@ fun processAllUsers(processor: (Users) -> Unit) {
     }
 }
 ```
+
+### 🔗 Smart Relationship Features
+
+**KotSQL automatically detects and generates relationship code from your SQL foreign keys!**
+
+✨ **Auto-detected relationships**: One-to-Many, Many-to-One, One-to-One, Many-to-Many  
+✨ **Smart ResultSet parsing**: Automatically populates relationships from JOIN queries  
+✨ **Type-safe navigation**: Helper methods for relationship checking  
+✨ **Zero configuration**: Works out of the box with foreign key constraints
+
+```sql
+-- Your existing schema with foreign keys
+CREATE TABLE suppliers (
+    id VARCHAR(128) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    contact_email VARCHAR(255)
+);
+
+CREATE TABLE purchase_orders (
+    po_number VARCHAR(128) PRIMARY KEY,
+    supplier_id VARCHAR(128) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'draft',
+    total_amount NUMERIC(12,2) NOT NULL DEFAULT 0.00,
+    FOREIGN KEY (supplier_id) REFERENCES suppliers(id)  -- 🎯 Auto-detected!
+);
+
+CREATE TABLE purchase_order_items (
+    po_id VARCHAR(128) NOT NULL,
+    product_id VARCHAR(128) NOT NULL,
+    quantity_ordered INTEGER NOT NULL,
+    unit_price NUMERIC(10,2) NOT NULL,
+    PRIMARY KEY (po_id, product_id),
+    FOREIGN KEY (po_id) REFERENCES purchase_orders(po_number),    -- 🎯 Auto-detected!
+    FOREIGN KEY (product_id) REFERENCES stock_products(id)       -- 🎯 Auto-detected!
+);
+```
+
+**Automatically generates enhanced entities:**
+
+```kotlin
+@Serializable
+data class Suppliers(
+    val id: String,
+    val name: String,
+    val contactEmail: String?,
+    
+    // ✨ Automatically generated One-to-Many relationship
+    val purchaseOrders: List<PurchaseOrders> = emptyList()
+) {
+    // ✨ Generated helper methods
+    fun hasPurchaseOrders(): Boolean = purchaseOrders.isNotEmpty()
+}
+
+@Serializable
+data class PurchaseOrders(
+    val poNumber: String,
+    val supplierId: String,
+    val status: String,
+    val totalAmount: Double,
+    
+    // ✨ Automatically generated relationships
+    val supplier: Suppliers? = null,                               // Many-to-One
+    val purchaseOrderItems: List<PurchaseOrderItems> = emptyList() // One-to-Many
+) {
+    // ✨ Generated helper methods
+    fun hasSupplier(): Boolean = supplier != null
+    fun hasPurchaseOrderItems(): Boolean = purchaseOrderItems.isNotEmpty()
+}
+```
+
+**🧠 Smart JOIN query parsing automatically populates relationships:**
+
+```kotlin
+// Your regular JOIN query
+val sql = """
+    SELECT 
+        po.po_number, po.status, po.total_amount,
+        s.name as supplier_name, s.contact_email as supplier_contact_email,
+        poi.product_id, poi.quantity_ordered, poi.unit_price,
+        sp.name as product_name, sp.selling_price as product_selling_price
+    FROM purchase_orders po
+    LEFT JOIN suppliers s ON po.supplier_id = s.id
+    LEFT JOIN purchase_order_items poi ON po.po_number = poi.po_id
+    LEFT JOIN stock_products sp ON poi.product_id = sp.id
+    WHERE po.po_number = ?
+"""
+
+// ✨ Magic happens here - relationships are auto-populated!
+val purchaseOrder = connection.prepareStatement(sql).use { stmt ->
+    stmt.setString(1, "PO-2024-001")
+    stmt.executeQuery().use { rs ->
+        rs.toPurchaseOrdersList().first()  // 🎯 Relationships populated automatically!
+    }
+}
+
+// Now you can navigate relationships type-safely:
+println("Order: ${purchaseOrder.poNumber}")
+println("Supplier: ${purchaseOrder.supplier?.name}")           // ✅ Auto-populated
+println("Items: ${purchaseOrder.purchaseOrderItems.size}")     // ✅ Auto-populated
+purchaseOrder.purchaseOrderItems.forEach { item ->
+    println("  - Product: ${item.stockProduct?.name}")         // ✅ Auto-populated
+}
+```
+
+**🎯 Enable relationships in your build:**
+
+```kotlin
+ksp {
+    arg("enableRelationships", "true")  // 🚀 Enable the magic
+    arg("sqlSchemaPath", "src/main/resources/schema.sql")
+    arg("targetPackage", "dev.gabrielolv.generated")
+}
+```
+
+> 📖 **Want to learn more?** Check out [RELATIONSHIPS.md](RELATIONSHIPS.md) for comprehensive examples, advanced patterns, and detailed documentation.
 
 ### Validation
 
@@ -252,7 +384,7 @@ try {
 }
 ```
 
-## 🔄 Schema Validation & Migration ✨ **NEW**
+## 🔄 Schema Validation & Migration
 
 ### Schema Evolution Tracking
 
@@ -349,9 +481,9 @@ When KSP runs, it will:
 4. Validate schema constraints
 5. Output detailed logging of all changes and recommendations
 
-## ⚡ Phase 8: Migration Support
+## ⚡ Migration Support
 
-**Phase 8** introduces a comprehensive migration execution and tracking system that safely manages database schema evolution in production environments.
+KotSQL includes a comprehensive migration execution and tracking system that safely manages database schema evolution in production environments.
 
 ### 🎯 Key Features
 
@@ -689,47 +821,41 @@ Run the comprehensive test suite:
 - **Relationship Detection**: Foreign keys, junction tables, circular dependencies
 - **JOIN Queries**: All join types and many-to-many relationships
 - **Schema Validation**: Change detection, migration generation, constraint validation
-- **Migration Support**: Migration tracking, execution, rollback, validation ✨ NEW
+- **Migration Support**: Migration tracking, execution, rollback, validation
 
 ## 🔄 Migration from Earlier Versions
 
-### From Phase 7 to Phase 8
+### Migration Configuration
 
-Phase 8 is fully backward compatible. Simply update your KSP configuration to enable the new features:
+KotSQL is fully backward compatible. Simply update your KSP configuration to enable migration features:
 
 ```kotlin
 ksp {
     // Existing configuration...
-    arg("enableSchemaValidation", "true")        // Phase 7
-    arg("generateMigrations", "true")            // Phase 7
-    arg("migrationOutputPath", "migrations")     // Phase 7
-    arg("enableMigrationTracking", "true")       // ✨ NEW Phase 8
-    arg("migrationDirectory", "migrations")      // ✨ NEW Phase 8
+    arg("enableSchemaValidation", "true")        // Schema validation
+    arg("generateMigrations", "true")            // Migration generation
+    arg("migrationOutputPath", "migrations")     // Migration output
+    arg("enableMigrationTracking", "true")       // Migration tracking
+    arg("migrationDirectory", "migrations")      // Migration directory
 }
 ```
 
-No changes to generated code are required. All new functionality is additive.
+No changes to generated code are required. All functionality is additive.
 
-## 🗺️ Roadmap
+## 🗺️ Current Features
 
-### Completed ✅
-- **Phase 1-2**: Basic SQL parsing and data class generation
-- **Phase 3-4**: Column constants and type-safe queries
-- **Phase 5**: Validation framework with runtime engine
-- **Phase 6**: Relationship mapping and JOIN queries
-- **Phase 7**: Schema validation and migration generation
-- **Phase 8**: Migration execution and tracking system ✅
+### Core Features ✅
+- **SQL Schema Parsing**: Complete CREATE TABLE statement parsing
+- **Data Class Generation**: Type-safe Kotlin data classes with proper type mapping
+- **Column Constants**: Typed column references for query building
+- **Type-Safe Queries**: Fluent API for building SQL queries with compile-time validation
+- **Validation Framework**: Runtime validation with automatic annotation mapping
+- **Relationship Mapping**: Full relationship detection and smart ResultSet parsing
+- **Schema Validation**: Schema evolution tracking and change detection
+- **Migration Support**: Migration execution and tracking system
 
-### Upcoming 🚧
-- **Phase 9**: Performance Optimization
-  - Query optimization hints
-  - Index recommendations
-  - Bulk operation support
-  - Connection pooling integration
-  - Query result caching
-  - Performance monitoring
-
-### Future Considerations 🌟
+### Future Enhancements 🌟
+- **Performance Optimization**: Query optimization hints, index recommendations, bulk operations
 - **Database-Specific Features**: PostgreSQL arrays, JSON columns, custom types
 - **Multi-Database Support**: Oracle, SQL Server, SQLite optimizations
 - **Advanced Relationships**: Polymorphic associations, inheritance mapping

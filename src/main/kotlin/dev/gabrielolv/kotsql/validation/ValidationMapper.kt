@@ -117,12 +117,13 @@ object ValidationMapper {
                     )
                 ))
             } else {
+                val (minValue, maxValue) = getNumericRangeConstants(column.sqlType)
                 annotations.add(ValidationAnnotationInfo(
                     name = "Range",
                     parameters = mapOf(
-                        "min" to range.first.toLong().toString(),
-                        "max" to range.second.toLong().toString(),
-                        "message" to "\"${column.columnName} must be between ${range.first.toLong()} and ${range.second.toLong()}\""
+                        "min" to minValue,
+                        "max" to maxValue,
+                        "message" to "\"${column.columnName} must be between ${minValue.replace("L", "")} and ${maxValue.replace("L", "")}\""
                     )
                 ))
             }
@@ -214,13 +215,28 @@ object ValidationMapper {
         val normalizedType = sqlType.uppercase()
         
         return when {
-            normalizedType.startsWith("TINYINT") -> -128.0 to 127.0
-            normalizedType.startsWith("SMALLINT") -> -32768.0 to 32767.0
-            normalizedType.startsWith("INT") || normalizedType.startsWith("INTEGER") -> -2147483648.0 to 2147483647.0
-            normalizedType.startsWith("BIGINT") -> -9223372036854775808.0 to 9223372036854775807.0
+            normalizedType.startsWith("TINYINT") -> Byte.MIN_VALUE.toDouble() to Byte.MAX_VALUE.toDouble()
+            normalizedType.startsWith("SMALLINT") -> Short.MIN_VALUE.toDouble() to Short.MAX_VALUE.toDouble()
+            normalizedType.startsWith("INT") || normalizedType.startsWith("INTEGER") -> Int.MIN_VALUE.toDouble() to Int.MAX_VALUE.toDouble()
+            normalizedType.startsWith("BIGINT") -> Long.MIN_VALUE.toDouble() to Long.MAX_VALUE.toDouble()
             normalizedType.startsWith("FLOAT") -> -Float.MAX_VALUE.toDouble() to Float.MAX_VALUE.toDouble()
             normalizedType.startsWith("DOUBLE") || normalizedType.startsWith("REAL") -> -Double.MAX_VALUE to Double.MAX_VALUE
             else -> null
+        }
+    }
+    
+    /**
+     * Get numeric range constants for SQL types that generate valid Kotlin constants
+     */
+    private fun getNumericRangeConstants(sqlType: String): Pair<String, String> {
+        val normalizedType = sqlType.uppercase()
+        
+        return when {
+            normalizedType.startsWith("TINYINT") -> "Byte.MIN_VALUE.toLong()" to "Byte.MAX_VALUE.toLong()"
+            normalizedType.startsWith("SMALLINT") -> "Short.MIN_VALUE.toLong()" to "Short.MAX_VALUE.toLong()"
+            normalizedType.startsWith("INT") || normalizedType.startsWith("INTEGER") -> "Int.MIN_VALUE.toLong()" to "Int.MAX_VALUE.toLong()"
+            normalizedType.startsWith("BIGINT") -> "Long.MIN_VALUE" to "Long.MAX_VALUE"
+            else -> "0L" to "0L" // Fallback, shouldn't be used for floating point types
         }
     }
 }

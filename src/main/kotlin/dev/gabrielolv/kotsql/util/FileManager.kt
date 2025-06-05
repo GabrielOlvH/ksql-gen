@@ -27,7 +27,8 @@ class FileManager(
         val table: SQLTableInfo,
         val packageName: String,
         val includeValidation: Boolean,
-        val relationships: SchemaRelationships?
+        val relationships: SchemaRelationships?,
+        val allTables: List<SQLTableInfo>? = null
     )
     
     /**
@@ -84,7 +85,8 @@ class FileManager(
                 table = table,
                 packageName = basePackageName,
                 includeValidation = includeValidation,
-                relationships = relationships
+                relationships = relationships,
+                allTables = tables
             )
             
             generateTableFiles(context)

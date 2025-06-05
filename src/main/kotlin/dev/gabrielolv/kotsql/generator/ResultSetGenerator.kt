@@ -3,29 +3,60 @@ package dev.gabrielolv.kotsql.generator
 import dev.gabrielolv.kotsql.mapping.TypeMapper
 import dev.gabrielolv.kotsql.model.SQLColumnInfo
 import dev.gabrielolv.kotsql.model.SQLTableInfo
+import dev.gabrielolv.kotsql.model.SchemaRelationships
 import dev.gabrielolv.kotsql.util.NamingConventions
+import java.sql.ResultSet
+import java.sql.SQLException
 
 /**
- * Handles generation of ResultSet parsing utilities for data classes
+ * Handles generation of ResultSet parsing utilities for data classes with relationship support
  */
 object ResultSetGenerator {
     
     /**
-     * Generate ResultSet extension methods for parsing rows into data classes
+     * Get all required imports for ResultSet extensions (excluding entity classes which are handled by ImportGenerator)
+     */
+    fun getRequiredImports(
+        table: SQLTableInfo, 
+        relationships: SchemaRelationships? = null
+    ): List<String> {
+        val imports = mutableSetOf<String>()
+        
+        // SQL imports
+        imports.add("java.sql.ResultSet")
+        imports.add("java.sql.SQLException")
+        imports.add("java.sql.PreparedStatement") // For companion methods
+        
+        // Always include Vector import (even for tables without vector columns)
+        // since parseVector utility functions are always generated
+        imports.add("dev.gabrielolv.kotsql.vector.Vector")
+        
+        // Type-specific imports for the main table (excluding entity classes)
+        imports.addAll(TypeMapper.getAllRequiredImports(table.columns))
+        
+        return imports.sorted()
+    }
+    
+    /**
+     * Generate ResultSet extension methods for parsing rows into data classes with smart relationship detection
      */
     fun generateResultSetExtensions(
         table: SQLTableInfo,
-        className: String
+        className: String,
+        relationships: SchemaRelationships? = null,
+        allTables: List<SQLTableInfo>? = null
     ): String {
         return buildString {
             appendLine("/**")
             appendLine(" * ResultSet parsing extensions for ${table.tableName} table")
+            appendLine(" * Supports automatic relationship population from joined ResultSets")
             appendLine(" */")
             appendLine()
             
-            // Generate main parsing method
+            // Generate main parsing method with relationship support
             appendLine("/**")
             appendLine(" * Parse current ResultSet row into a $className instance")
+            appendLine(" * Automatically detects and populates relationships from joined data")
             appendLine(" * @throws SQLException if column access fails")
             appendLine(" * @throws IllegalStateException if ResultSet is not positioned on a valid row")
             appendLine(" */")
@@ -47,6 +78,13 @@ object ResultSetGenerator {
             appendLine("}")
             appendLine()
             
+            // Generate smart list parsing with relationship detection
+            if (relationships != null) {
+                generateSmartListParsing(table, className, relationships, allTables)
+            } else {
+                generateSimpleListParsing(className)
+            }
+            
             // Generate nullable parsing method
             appendLine("/**")
             appendLine(" * Parse current ResultSet row into a $className instance, returning null if positioned before first or after last")
@@ -57,26 +95,6 @@ object ResultSetGenerator {
             appendLine("    } catch (e: SQLException) {")
             appendLine("        null")
             appendLine("    }")
-            appendLine("}")
-            appendLine()
-            
-            // Generate list parsing method
-            appendLine("/**")
-            appendLine(" * Parse all rows from ResultSet into a list of $className instances")
-            appendLine(" * @param closeAfter whether to close the ResultSet after parsing (default: true)")
-            appendLine(" */")
-            appendLine("fun ResultSet.to${className}List(closeAfter: Boolean = true): List<$className> {")
-            appendLine("    val result = mutableListOf<$className>()")
-            appendLine("    try {")
-            appendLine("        while (next()) {")
-            appendLine("            result.add(to$className())")
-            appendLine("        }")
-            appendLine("    } finally {")
-            appendLine("        if (closeAfter) {")
-            appendLine("            close()")
-            appendLine("        }")
-            appendLine("    }")
-            appendLine("    return result")
             appendLine("}")
             appendLine()
             
@@ -119,6 +137,799 @@ object ResultSetGenerator {
             appendLine("}")
             appendLine()
         }
+    }
+    
+    /**
+     * Generate smart list parsing that detects joined tables and populates relationships
+     */
+    private fun StringBuilder.generateSmartListParsing(
+        table: SQLTableInfo,
+        className: String,
+        relationships: SchemaRelationships,
+        allTables: List<SQLTableInfo>? = null
+    ) {
+        appendLine("/**")
+        appendLine(" * Parse all rows from ResultSet into a list of $className instances")
+        appendLine(" * Automatically detects joined tables and populates relationships")
+        appendLine(" * @param closeAfter whether to close the ResultSet after parsing (default: true)")
+        appendLine(" */")
+        appendLine("fun ResultSet.to${className}List(closeAfter: Boolean = true): List<$className> {")
+        appendLine("    try {")
+        appendLine("        // Detect which tables are present in the ResultSet")
+        appendLine("        val availableTables = detectJoinedTables()")
+        appendLine("        ")
+        appendLine("        // Use enhanced parsing when related tables are available")
+        appendLine("        return when {")
+        
+        // Collect all conditions with their tables to avoid duplicates
+        val conditionsGenerated = mutableSetOf<String>()
+        
+        // Generate specific parsing methods for each relationship
+        val outgoingRels = relationships.getOutgoingRelationships(table.tableName)
+        val incomingRels = relationships.getIncomingRelationships(table.tableName)
+        
+        // Generate conditions for outgoing relationships (ManyToOne, OneToOne) first
+        outgoingRels.forEach { rel ->
+            when (rel) {
+                is dev.gabrielolv.kotsql.model.RelationshipInfo.ManyToOne,
+                is dev.gabrielolv.kotsql.model.RelationshipInfo.OneToOne -> {
+                    val relatedTable = rel.toTable
+                    if (!conditionsGenerated.contains(relatedTable)) {
+                        appendLine("            availableTables.contains(\"${relatedTable}\") -> to${className}ListWith${NamingConventions.tableNameToClassName(relatedTable)}()")
+                        conditionsGenerated.add(relatedTable)
+                    }
+                }
+                else -> {}
+            }
+        }
+//
+//        // Generate conditions for OneToMany relationships where this table is the parent
+//        incomingRels.filterIsInstance<dev.gabrielolv.kotsql.model.RelationshipInfo.OneToMany>().forEach { rel ->
+//            // Only generate Children methods if this table is the parent (fromTable) in the OneToMany relationship
+//            if (rel.fromTable == table.tableName) {
+//                val relatedTable = rel.toTable
+//                if (!conditionsGenerated.contains(relatedTable)) {
+//                    appendLine("            availableTables.contains(\"${relatedTable}\") -> to${className}ListWith${NamingConventions.tableNameToClassName(relatedTable)}Children()")
+//                    conditionsGenerated.add(relatedTable)
+//                }
+//            }
+//        }
+
+        // Handle many-to-many relationships
+        val manyToManyRels = relationships.relationships.filterIsInstance<dev.gabrielolv.kotsql.model.RelationshipInfo.ManyToMany>()
+            .filter { it.fromTable == table.tableName || it.toTable == table.tableName }
+        
+        manyToManyRels.forEach { rel ->
+            val isFromTable = table.tableName == rel.fromTable
+            val relatedTable = if (isFromTable) rel.toTable else rel.fromTable
+            if (!conditionsGenerated.contains(relatedTable)) {
+                appendLine("            availableTables.contains(\"${relatedTable}\") -> to${className}ListWith${NamingConventions.tableNameToClassName(relatedTable)}()")
+                conditionsGenerated.add(relatedTable)
+            }
+        }
+        
+        appendLine("            else -> to${className}ListSimple()")
+        appendLine("        }")
+        appendLine("    } finally {")
+        appendLine("        if (closeAfter) {")
+        appendLine("            close()")
+        appendLine("        }")
+        appendLine("    }")
+        appendLine("}")
+        appendLine()
+        
+        // Generate the detection method
+        generateTableDetectionMethod(table, relationships, allTables)
+        
+        // Generate simple parsing method
+        appendLine("/**")
+        appendLine(" * Parse ResultSet without any relationships (simple case)")
+        appendLine(" */")
+        appendLine("private fun ResultSet.to${className}ListSimple(): List<$className> {")
+        appendLine("    val result = mutableListOf<$className>()")
+        appendLine("    while (next()) {")
+        appendLine("        result.add(to$className())")
+        appendLine("    }")
+        appendLine("    return result")
+        appendLine("}")
+        appendLine()
+        
+        // Generate enhanced relationship parsing methods
+        generateEnhancedRelationshipMethods(table, className, relationships, allTables)
+        
+        // Generate entity extraction methods for related tables
+        generateEntityExtractionMethods(table, relationships, allTables)
+    }
+    
+    /**
+     * Generate enhanced relationship parsing methods
+     */
+    private fun StringBuilder.generateEnhancedRelationshipMethods(
+        table: SQLTableInfo,
+        className: String,
+        relationships: SchemaRelationships,
+        allTables: List<SQLTableInfo>?
+    ) {
+        val outgoingRels = relationships.getOutgoingRelationships(table.tableName)
+        val incomingRels = relationships.getIncomingRelationships(table.tableName)
+        val generatedMethods = mutableSetOf<String>()
+        
+        // Generate methods for outgoing relationships (ManyToOne, OneToOne)
+        outgoingRels.forEach { rel ->
+            when (rel) {
+                is dev.gabrielolv.kotsql.model.RelationshipInfo.ManyToOne,
+                is dev.gabrielolv.kotsql.model.RelationshipInfo.OneToOne -> {
+                    val methodName = "to${className}ListWith${NamingConventions.tableNameToClassName(rel.toTable)}"
+                    if (!generatedMethods.contains(methodName)) {
+                        generateOutgoingRelationshipMethod(table, className, rel, allTables)
+                        generatedMethods.add(methodName)
+                    }
+                }
+                else -> {}
+            }
+        }
+        
+        // Generate methods for incoming OneToMany relationships
+        incomingRels.filterIsInstance<dev.gabrielolv.kotsql.model.RelationshipInfo.OneToMany>().forEach { rel ->
+            // Only generate Children methods if this table is the parent (fromTable) in the OneToMany relationship
+            if (rel.fromTable == table.tableName) {
+                val methodName = "to${className}ListWith${NamingConventions.tableNameToClassName(rel.toTable)}Children"
+            if (!generatedMethods.contains(methodName)) {
+                generateIncomingRelationshipMethod(table, className, rel, allTables)
+                generatedMethods.add(methodName)
+                }
+            }
+        }
+        
+        // Generate methods for ManyToMany relationships
+        val manyToManyRels = relationships.relationships.filterIsInstance<dev.gabrielolv.kotsql.model.RelationshipInfo.ManyToMany>()
+            .filter { it.fromTable == table.tableName || it.toTable == table.tableName }
+        
+        manyToManyRels.forEach { rel ->
+            val isFromTable = table.tableName == rel.fromTable
+            val relatedTable = if (isFromTable) rel.toTable else rel.fromTable
+            val methodName = "to${className}ListWith${NamingConventions.tableNameToClassName(relatedTable)}"
+            if (!generatedMethods.contains(methodName)) {
+                generateManyToManyRelationshipMethod(table, className, rel, allTables)
+                generatedMethods.add(methodName)
+            }
+        }
+    }
+    
+    /**
+     * Generate entity extraction methods for all related tables
+     */
+    private fun StringBuilder.generateEntityExtractionMethods(
+        table: SQLTableInfo,
+        relationships: SchemaRelationships,
+        allTables: List<SQLTableInfo>?
+    ) {
+        val relatedTables = mutableSetOf<String>()
+        
+        // Collect all related table names
+        relationships.getOutgoingRelationships(table.tableName).forEach { rel ->
+            relatedTables.add(rel.toTable)
+        }
+        
+        relationships.getIncomingRelationships(table.tableName).forEach { rel ->
+            relatedTables.add(rel.fromTable)
+        }
+        
+        // Generate extraction method for each related table
+        relatedTables.forEach { relatedTableName ->
+            val relatedClassName = NamingConventions.tableNameToClassName(relatedTableName)
+            generateEntityExtractionMethod(relatedTableName, relatedClassName, relationships, allTables)
+        }
+    }
+    
+    /**
+     * Generate parsing method for outgoing relationships (ManyToOne, OneToOne)
+     */
+    private fun StringBuilder.generateOutgoingRelationshipMethod(
+        table: SQLTableInfo,
+        className: String,
+        relationship: dev.gabrielolv.kotsql.model.RelationshipInfo,
+        allTables: List<SQLTableInfo>?
+    ) {
+        val relatedClassName = NamingConventions.tableNameToClassName(relationship.toTable)
+        val methodName = "to${className}ListWith$relatedClassName"
+        val relationshipPropertyName = NamingConventions.tableNameToPropertyName(relationship.toTable)
+        
+        appendLine("/**")
+        appendLine(" * Parse $className list with ${relationship.toTable} relationship populated")
+        appendLine(" * Expects ResultSet from a JOIN query with ${relationship.toTable} table")
+        appendLine(" */")
+        appendLine("private fun ResultSet.${methodName}(): List<$className> {")
+        appendLine("    val result = mutableMapOf<String, $className>()")
+        appendLine("    ")
+        appendLine("    while (next()) {")
+        appendLine("        // Get the primary key for deduplication")
+        
+        if (table.primaryKeyColumns.size == 1) {
+            val pkColumn = table.primaryKeyColumns.first()
+            appendLine("        val entityKey = getString(\"${pkColumn.columnName}\")")
+        } else {
+            // Composite key handling
+            val keyParts = table.primaryKeyColumns.joinToString(" + \"-\" + ") { "getString(\"${it.columnName}\")" }
+            appendLine("        val entityKey = $keyParts")
+        }
+        
+        appendLine("        ")
+        appendLine("        if (!result.containsKey(entityKey)) {")
+        appendLine("            // Parse main entity")
+        appendLine("            val baseEntity = to$className()")
+        appendLine("            ")
+        appendLine("            // Extract and populate related entity if present")
+        appendLine("            val entityWithRelationship = try {")
+        appendLine("                val related$relatedClassName = extract${relatedClassName}FromResultSet()")
+        appendLine("                baseEntity.copy($relationshipPropertyName = related$relatedClassName)")
+        appendLine("            } catch (e: Exception) {")
+        appendLine("                // Related entity might be null in LEFT JOIN, use base entity")
+        appendLine("                baseEntity")
+        appendLine("            }")
+        appendLine("            ")
+        appendLine("            result[entityKey] = entityWithRelationship")
+        appendLine("        }")
+        appendLine("    }")
+        appendLine("    ")
+        appendLine("    return result.values.toList()")
+        appendLine("}")
+        appendLine()
+    }
+    
+    /**
+     * Generate parsing method for incoming OneToMany relationships
+     */
+    private fun StringBuilder.generateIncomingRelationshipMethod(
+        table: SQLTableInfo,
+        className: String,
+        relationship: dev.gabrielolv.kotsql.model.RelationshipInfo.OneToMany,
+        allTables: List<SQLTableInfo>?
+    ) {
+        val relatedClassName = NamingConventions.tableNameToClassName(relationship.fromTable)
+        val methodName = "to${className}ListWith${relatedClassName}Children"
+        val relationshipPropertyName = NamingConventions.tableNameToPluralPropertyName(relationship.fromTable)
+        
+        appendLine("/**")
+        appendLine(" * Parse $className list with ${relationship.fromTable} children populated")
+        appendLine(" * Groups related ${relationship.fromTable} records by parent $className")
+        appendLine(" */")
+        appendLine("private fun ResultSet.${methodName}(): List<$className> {")
+        appendLine("    val parentMap = mutableMapOf<String, $className>()")
+        appendLine("    val childrenMap = mutableMapOf<String, MutableList<$relatedClassName>>()")
+        appendLine("    ")
+        appendLine("    while (next()) {")
+        
+        // Handle primary key for parent entity
+        if (table.primaryKeyColumns.size == 1) {
+            val pkColumn = table.primaryKeyColumns.first()
+            appendLine("        val parentKey = getString(\"${pkColumn.columnName}\")")
+        } else {
+            val keyParts = table.primaryKeyColumns.joinToString(" + \"-\" + ") { "getString(\"${it.columnName}\")" }
+            appendLine("        val parentKey = $keyParts")
+        }
+        
+        appendLine("        ")
+        appendLine("        // Parse parent entity if not already processed")
+        appendLine("        if (!parentMap.containsKey(parentKey)) {")
+        appendLine("            val parent = to$className()")
+        appendLine("            parentMap[parentKey] = parent")
+        appendLine("            childrenMap[parentKey] = mutableListOf()")
+        appendLine("        }")
+        appendLine("        ")
+        appendLine("        // Parse child entity if present")
+        appendLine("        try {")
+        appendLine("            val child = extract${relatedClassName}FromResultSet()")
+        appendLine("            childrenMap[parentKey]?.add(child)")
+        appendLine("        } catch (e: Exception) {")
+        appendLine("            // Child data might be null or missing, skip")
+        appendLine("        }")
+        appendLine("    }")
+        appendLine("    ")
+        appendLine("    // Create final entities with populated children")
+        appendLine("    return parentMap.map { (key, parent) ->")
+        appendLine("        val children = childrenMap[key] ?: emptyList()")
+        appendLine("        parent.copy($relationshipPropertyName = children)")
+        appendLine("    }")
+        appendLine("}")
+        appendLine()
+    }
+    
+    /**
+     * Generate parsing method for ManyToMany relationships
+     */
+    private fun StringBuilder.generateManyToManyRelationshipMethod(
+        table: SQLTableInfo,
+        className: String,
+        relationship: dev.gabrielolv.kotsql.model.RelationshipInfo.ManyToMany,
+        allTables: List<SQLTableInfo>?
+    ) {
+        val isFromTable = table.tableName == relationship.fromTable
+        val relatedTable = if (isFromTable) relationship.toTable else relationship.fromTable
+        val relatedClassName = NamingConventions.tableNameToClassName(relatedTable)
+        val methodName = "to${className}ListWith$relatedClassName"
+        val relationshipPropertyName = NamingConventions.tableNameToPluralPropertyName(relatedTable)
+        
+        appendLine("/**")
+        appendLine(" * Parse $className list with $relatedTable many-to-many relationship populated")
+        appendLine(" * Expects ResultSet from a JOIN query through ${relationship.junctionTable}")
+        appendLine(" */")
+        appendLine("private fun ResultSet.${methodName}(): List<$className> {")
+        appendLine("    val entityMap = mutableMapOf<String, $className>()")
+        appendLine("    val relatedMap = mutableMapOf<String, MutableList<$relatedClassName>>()")
+        appendLine("    ")
+        appendLine("    while (next()) {")
+        
+        // Handle primary key for main entity
+        if (table.primaryKeyColumns.size == 1) {
+            val pkColumn = table.primaryKeyColumns.first()
+            appendLine("        val entityKey = getString(\"${pkColumn.columnName}\")")
+        } else {
+            val keyParts = table.primaryKeyColumns.joinToString(" + \"-\" + ") { "getString(\"${it.columnName}\")" }
+            appendLine("        val entityKey = $keyParts")
+        }
+        
+        appendLine("        ")
+        appendLine("        // Parse main entity if not already processed")
+        appendLine("        if (!entityMap.containsKey(entityKey)) {")
+        appendLine("            val entity = to$className()")
+        appendLine("            entityMap[entityKey] = entity")
+        appendLine("            relatedMap[entityKey] = mutableListOf()")
+        appendLine("        }")
+        appendLine("        ")
+        appendLine("        // Parse related entity if present")
+        appendLine("        try {")
+        appendLine("            val relatedEntity = extract${relatedClassName}FromResultSet()")
+        appendLine("            relatedMap[entityKey]?.add(relatedEntity)")
+        appendLine("        } catch (e: Exception) {")
+        appendLine("            // Related data might be null or missing, skip")
+        appendLine("        }")
+        appendLine("    }")
+        appendLine("    ")
+        appendLine("    // Create final entities with populated relationships")
+        appendLine("    return entityMap.map { (key, entity) ->")
+        appendLine("        val relatedEntities = relatedMap[key] ?: emptyList()")
+        appendLine("        entity.copy($relationshipPropertyName = relatedEntities)")
+        appendLine("    }")
+        appendLine("}")
+        appendLine()
+    }
+    
+    /**
+     * Generate simple list parsing for when no relationships are available
+     */
+    private fun StringBuilder.generateSimpleListParsing(className: String) {
+        appendLine("/**")
+        appendLine(" * Parse all rows from ResultSet into a list of $className instances")
+        appendLine(" * @param closeAfter whether to close the ResultSet after parsing (default: true)")
+        appendLine(" */")
+        appendLine("fun ResultSet.to${className}List(closeAfter: Boolean = true): List<$className> {")
+        appendLine("    val result = mutableListOf<$className>()")
+        appendLine("    try {")
+        appendLine("        while (next()) {")
+        appendLine("            result.add(to$className())")
+        appendLine("        }")
+        appendLine("    } finally {")
+        appendLine("        if (closeAfter) {")
+        appendLine("            close()")
+        appendLine("        }")
+        appendLine("    }")
+        appendLine("    return result")
+        appendLine("}")
+        appendLine()
+    }
+    
+    /**
+     * Generate table detection method
+     */
+    private fun StringBuilder.generateTableDetectionMethod(
+        table: SQLTableInfo,
+        relationships: SchemaRelationships,
+        allTables: List<SQLTableInfo>?
+    ) {
+        appendLine("/**")
+        appendLine(" * Detect which tables are present in the ResultSet based on column names and metadata")
+        appendLine(" */")
+        appendLine("private fun ResultSet.detectJoinedTables(): Set<String> {")
+        appendLine("    val tables = mutableSetOf<String>()")
+        appendLine("    val metaData = this.metaData")
+        appendLine("    ")
+        appendLine("    for (i in 1..metaData.columnCount) {")
+        appendLine("        val columnName = metaData.getColumnName(i)")
+        appendLine("        val tableName = try { metaData.getTableName(i) } catch (e: SQLException) { \"\" }")
+        appendLine("        ")
+        appendLine("        // Add table if explicitly specified in metadata")
+        appendLine("        if (tableName.isNotBlank()) {")
+        appendLine("            tables.add(tableName)")
+        appendLine("        }")
+        appendLine("        ")
+        appendLine("        // Detect by table alias patterns (table_name.column_name)")
+        appendLine("        if (columnName.contains(\".\")) {")
+        appendLine("            val tableAlias = columnName.substringBefore(\".\")")
+        
+        // Generate validation against known tables
+        val knownTables = mutableSetOf<String>()
+        knownTables.add(table.tableName)
+        
+        // Add tables from relationships
+        relationships.getOutgoingRelationships(table.tableName).forEach { rel ->
+            knownTables.add(rel.toTable)
+        }
+        relationships.getIncomingRelationships(table.tableName).forEach { rel ->
+            knownTables.add(rel.fromTable)
+        }
+        
+        // Add all tables if available
+        allTables?.forEach { knownTables.add(it.tableName) }
+        
+        if (knownTables.isNotEmpty()) {
+            appendLine("            // Only add table if it's a known table from the schema")
+            appendLine("            val knownTables = setOf(${knownTables.joinToString(", ") { "\"$it\"" }})")
+            appendLine("            if (knownTables.contains(tableAlias)) {")
+            appendLine("                tables.add(tableAlias)")
+            appendLine("            }")
+        } else {
+            appendLine("            tables.add(tableAlias)")
+        }
+        
+        appendLine("        }")
+        appendLine("    }")
+        appendLine("    ")
+        appendLine("    return tables")
+        appendLine("}")
+        appendLine()
+    }
+    
+    /**
+     * Generate entity extraction method for a related table
+     */
+    private fun StringBuilder.generateEntityExtractionMethod(
+        tableName: String,
+        className: String,
+        relationships: SchemaRelationships,
+        allTables: List<SQLTableInfo>?
+    ) {
+        appendLine("/**")
+        appendLine(" * Extract $className from current ResultSet row")
+        appendLine(" * Uses table prefixing to avoid column name conflicts in JOINs")
+        appendLine(" * Supports multiple alias formats: table.column, table_column, tablealias_column")
+        appendLine(" */")
+        appendLine("private fun ResultSet.extract${className}FromResultSet(): $className {")
+        
+        // Find the table info from allTables if available
+        val tableInfo = allTables?.find { it.tableName == tableName }
+        
+        if (tableInfo != null) {
+            appendLine("    return $className(")
+            tableInfo.columns.forEachIndexed { index, column ->
+                val propertyName = NamingConventions.columnNameToPropertyName(column.columnName)
+                val getter = generateSmartResultSetGetter(column, tableName)
+                appendLine("        $propertyName = $getter")
+                if (index < tableInfo.columns.size - 1) {
+                    appendLine(",")
+                } else {
+                    appendLine()
+                }
+            }
+            appendLine("    )")
+        } else {
+            appendLine("    // Table metadata not available - cannot extract entity")
+            appendLine("    throw IllegalStateException(\"Cannot extract $className: table metadata not available during generation\")")
+        }
+        
+        appendLine("}")
+        appendLine()
+    }
+    
+    /**
+     * Generate a smart ResultSet getter that tries multiple alias formats
+     * Common formats: table.column, table_column, alias_column, column
+     */
+    private fun generateSmartResultSetGetter(column: SQLColumnInfo, tableName: String): String {
+        val columnName = column.columnName
+        val kotlinType = TypeMapper.mapToKotlinType(column)
+        val baseType = kotlinType.removeSuffix("?")
+        val isNullable = column.isNullable && !column.isPrimaryKey
+        
+        // Generate list of column names to try in order of preference
+        val aliasFormats = listOf(
+            "${tableName}.${columnName}",    // table.column (SQL standard)
+            "${tableName}_${columnName}",    // table_column (common alias format)
+            "${tableName.take(1)}${columnName}",  // t_column (single letter alias)
+            columnName                        // column (fallback)
+        )
+        
+        val getterCall = when (baseType) {
+            "String" -> if (isNullable) "getString" else "getString"
+            "Int" -> "getInt"
+            "Long" -> "getLong"
+            "Short" -> "getShort"
+            "Byte" -> "getByte"
+            "Float" -> "getFloat"
+            "Double" -> "getDouble"
+            "Boolean" -> "getBoolean"
+            "ByteArray" -> "getBytes"
+            "kotlinx.datetime.Instant" -> "getTimestamp"
+            "kotlinx.datetime.LocalDate" -> "getDate"
+            "kotlinx.datetime.LocalTime" -> "getTime"
+            "kotlin.uuid.Uuid" -> "getString"
+            "kotlinx.serialization.json.JsonElement" -> "getString"
+            "Vector" -> "getString"
+            "FloatArray" -> "getString"
+            else -> "getString"
+        }
+        
+        return buildString {
+            append("tryGetColumn(listOf(")
+            append(aliasFormats.joinToString(", ") { "\"$it\"" })
+            append(")) { columnName -> ")
+            
+            when (baseType) {
+                "String" -> {
+                    if (isNullable) {
+                        append("$getterCall(columnName)")
+                    } else {
+                        append("$getterCall(columnName) ?: \"\"")
+                    }
+                }
+                "Int", "Long", "Short", "Byte", "Float", "Double", "Boolean" -> {
+                    if (isNullable) {
+                        append("$getterCall(columnName).takeIf { !wasNull() }")
+                    } else {
+                        append("$getterCall(columnName)")
+                    }
+                }
+                "ByteArray" -> {
+                    if (isNullable) {
+                        append("$getterCall(columnName)")
+                    } else {
+                        append("$getterCall(columnName) ?: byteArrayOf()")
+                    }
+                }
+                "kotlinx.datetime.Instant" -> {
+                    if (isNullable) {
+                        append("$getterCall(columnName)?.toKotlinInstant()")
+                    } else {
+                        append("$getterCall(columnName).toKotlinInstant()")
+                    }
+                }
+                "kotlinx.datetime.LocalDate" -> {
+                    if (isNullable) {
+                        append("$getterCall(columnName)?.toKotlinLocalDate()")
+                    } else {
+                        append("$getterCall(columnName).toKotlinLocalDate()")
+                    }
+                }
+                "kotlinx.datetime.LocalTime" -> {
+                    if (isNullable) {
+                        append("$getterCall(columnName)?.toKotlinLocalTime()")
+                    } else {
+                        append("$getterCall(columnName).toKotlinLocalTime()")
+                    }
+                }
+                "kotlin.uuid.Uuid" -> {
+                    if (isNullable) {
+                        append("$getterCall(columnName)?.let { kotlin.uuid.Uuid.parse(it) }")
+                    } else {
+                        append("kotlin.uuid.Uuid.parse($getterCall(columnName))")
+                    }
+                }
+                "kotlinx.serialization.json.JsonElement" -> {
+                    if (isNullable) {
+                        append("$getterCall(columnName)?.let { kotlinx.serialization.json.Json.parseToJsonElement(it) }")
+                    } else {
+                        append("kotlinx.serialization.json.Json.parseToJsonElement($getterCall(columnName))")
+                    }
+                }
+                "Vector" -> {
+                    if (isNullable) {
+                        append("$getterCall(columnName)?.let { parseVector(it) }")
+                    } else {
+                        append("parseVector($getterCall(columnName))")
+                    }
+                }
+                "FloatArray" -> {
+                    if (isNullable) {
+                        append("$getterCall(columnName)?.let { parseFloatArray(it) }")
+                    } else {
+                        append("parseFloatArray($getterCall(columnName))")
+                    }
+                }
+                else -> {
+                    if (isNullable) {
+                        append("$getterCall(columnName)")
+                    } else {
+                        append("$getterCall(columnName) ?: \"\"")
+                    }
+                }
+            }
+            append(" }")
+        }
+    }
+
+    /**
+     * Generate a simple ResultSet getter for aliased columns
+     * Uses try-catch to handle missing columns gracefully
+     */
+    private fun generateResultSetGetterSimple(column: SQLColumnInfo, aliasedColumnName: String): String {
+        val kotlinType = TypeMapper.mapToKotlinType(column)
+        val baseType = kotlinType.removeSuffix("?")
+        val columnName = column.columnName
+        val isNullable = column.isNullable && !column.isPrimaryKey
+        
+        return "try { " + when (baseType) {
+            "String" -> if (isNullable) {
+                "getString(\"$aliasedColumnName\")"
+            } else {
+                "getString(\"$aliasedColumnName\") ?: \"\""
+            }
+            "Int" -> if (isNullable) {
+                "getInt(\"$aliasedColumnName\").takeIf { !wasNull() }"
+            } else {
+                "getInt(\"$aliasedColumnName\")"
+            }
+            "Long" -> if (isNullable) {
+                "getLong(\"$aliasedColumnName\").takeIf { !wasNull() }"
+            } else {
+                "getLong(\"$aliasedColumnName\")"
+            }
+            "Short" -> if (isNullable) {
+                "getShort(\"$aliasedColumnName\").takeIf { !wasNull() }"
+            } else {
+                "getShort(\"$aliasedColumnName\")"
+            }
+            "Byte" -> if (isNullable) {
+                "getByte(\"$aliasedColumnName\").takeIf { !wasNull() }"
+            } else {
+                "getByte(\"$aliasedColumnName\")"
+            }
+            "Float" -> if (isNullable) {
+                "getFloat(\"$aliasedColumnName\").takeIf { !wasNull() }"
+            } else {
+                "getFloat(\"$aliasedColumnName\")"
+            }
+            "Double" -> if (isNullable) {
+                "getDouble(\"$aliasedColumnName\").takeIf { !wasNull() }"
+            } else {
+                "getDouble(\"$aliasedColumnName\")"
+            }
+            "Boolean" -> if (isNullable) {
+                "getBoolean(\"$aliasedColumnName\").takeIf { !wasNull() }"
+            } else {
+                "getBoolean(\"$aliasedColumnName\")"
+            }
+            "ByteArray" -> if (isNullable) {
+                "getBytes(\"$aliasedColumnName\")"
+            } else {
+                "getBytes(\"$aliasedColumnName\") ?: byteArrayOf()"
+            }
+            "kotlinx.datetime.Instant" -> if (isNullable) {
+                "getTimestamp(\"$aliasedColumnName\")?.toKotlinInstant()"
+            } else {
+                "getTimestamp(\"$aliasedColumnName\").toKotlinInstant()"
+            }
+            "kotlinx.datetime.LocalDate" -> if (isNullable) {
+                "getDate(\"$aliasedColumnName\")?.toKotlinLocalDate()"
+            } else {
+                "getDate(\"$aliasedColumnName\").toKotlinLocalDate()"
+            }
+            "kotlinx.datetime.LocalTime" -> if (isNullable) {
+                "getTime(\"$aliasedColumnName\")?.toKotlinLocalTime()"
+            } else {
+                "getTime(\"$aliasedColumnName\").toKotlinLocalTime()"
+            }
+            "kotlin.uuid.Uuid" -> if (isNullable) {
+                "getString(\"$aliasedColumnName\")?.let { kotlin.uuid.Uuid.parse(it) }"
+            } else {
+                "kotlin.uuid.Uuid.parse(getString(\"$aliasedColumnName\"))"
+            }
+            "kotlinx.serialization.json.JsonElement" -> if (isNullable) {
+                "getString(\"$aliasedColumnName\")?.let { kotlinx.serialization.json.Json.parseToJsonElement(it) }"
+            } else {
+                "kotlinx.serialization.json.Json.parseToJsonElement(getString(\"$aliasedColumnName\"))"
+            }
+            "Vector" -> if (isNullable) {
+                "getString(\"$aliasedColumnName\")?.let { parseVector(it) }"
+            } else {
+                "parseVector(getString(\"$aliasedColumnName\"))"
+            }
+            "FloatArray" -> if (isNullable) {
+                "getString(\"$aliasedColumnName\")?.let { parseFloatArray(it) }"
+            } else {
+                "parseFloatArray(getString(\"$aliasedColumnName\"))"
+            }
+            else -> if (isNullable) {
+                "getString(\"$aliasedColumnName\")"
+            } else {
+                "getString(\"$aliasedColumnName\") ?: \"\""
+            }
+        } + " } catch (e: SQLException) { " + when (baseType) {
+            "String" -> if (isNullable) {
+                "getString(\"$columnName\")"
+            } else {
+                "getString(\"$columnName\") ?: \"\""
+            }
+            "Int" -> if (isNullable) {
+                "getInt(\"$columnName\").takeIf { !wasNull() }"
+            } else {
+                "getInt(\"$columnName\")"
+            }
+            "Long" -> if (isNullable) {
+                "getLong(\"$columnName\").takeIf { !wasNull() }"
+            } else {
+                "getLong(\"$columnName\")"
+            }
+            "Short" -> if (isNullable) {
+                "getShort(\"$columnName\").takeIf { !wasNull() }"
+            } else {
+                "getShort(\"$columnName\")"
+            }
+            "Byte" -> if (isNullable) {
+                "getByte(\"$columnName\").takeIf { !wasNull() }"
+            } else {
+                "getByte(\"$columnName\")"
+            }
+            "Float" -> if (isNullable) {
+                "getFloat(\"$columnName\").takeIf { !wasNull() }"
+            } else {
+                "getFloat(\"$columnName\")"
+            }
+            "Double" -> if (isNullable) {
+                "getDouble(\"$columnName\").takeIf { !wasNull() }"
+            } else {
+                "getDouble(\"$columnName\")"
+            }
+            "Boolean" -> if (isNullable) {
+                "getBoolean(\"$columnName\").takeIf { !wasNull() }"
+            } else {
+                "getBoolean(\"$columnName\")"
+            }
+            "ByteArray" -> if (isNullable) {
+                "getBytes(\"$columnName\")"
+            } else {
+                "getBytes(\"$columnName\") ?: byteArrayOf()"
+            }
+            "kotlinx.datetime.Instant" -> if (isNullable) {
+                "getTimestamp(\"$columnName\")?.toKotlinInstant()"
+            } else {
+                "getTimestamp(\"$columnName\").toKotlinInstant()"
+            }
+            "kotlinx.datetime.LocalDate" -> if (isNullable) {
+                "getDate(\"$columnName\")?.toKotlinLocalDate()"
+            } else {
+                "getDate(\"$columnName\").toKotlinLocalDate()"
+            }
+            "kotlinx.datetime.LocalTime" -> if (isNullable) {
+                "getTime(\"$columnName\")?.toKotlinLocalTime()"
+            } else {
+                "getTime(\"$columnName\").toKotlinLocalTime()"
+            }
+            "kotlin.uuid.Uuid" -> if (isNullable) {
+                "getString(\"$columnName\")?.let { kotlin.uuid.Uuid.parse(it) }"
+            } else {
+                "kotlin.uuid.Uuid.parse(getString(\"$columnName\"))"
+            }
+            "kotlinx.serialization.json.JsonElement" -> if (isNullable) {
+                "getString(\"$columnName\")?.let { kotlinx.serialization.json.Json.parseToJsonElement(it) }"
+            } else {
+                "kotlinx.serialization.json.Json.parseToJsonElement(getString(\"$columnName\"))"
+            }
+            "Vector" -> if (isNullable) {
+                "getString(\"$columnName\")?.let { parseVector(it) }"
+            } else {
+                "parseVector(getString(\"$columnName\"))"
+            }
+            "FloatArray" -> if (isNullable) {
+                "getString(\"$columnName\")?.let { parseFloatArray(it) }"
+            } else {
+                "parseFloatArray(getString(\"$columnName\"))"
+            }
+            else -> if (isNullable) {
+                "getString(\"$columnName\")"
+            } else {
+                "getString(\"$columnName\") ?: \"\""
+            }
+        } + " }"
     }
     
     /**
@@ -270,7 +1081,7 @@ object ResultSetGenerator {
             "kotlinx.datetime.LocalTime" -> if (isNullable) "getTime(\"$columnName\")?.toKotlinLocalTime()" else "getTime(\"$columnName\").toKotlinLocalTime()"
             "kotlin.uuid.Uuid" -> if (isNullable) "getString(\"$columnName\")?.let { kotlin.uuid.Uuid.parse(it) }" else "kotlin.uuid.Uuid.parse(getString(\"$columnName\"))"
             "kotlinx.serialization.json.JsonElement" -> if (isNullable) "getString(\"$columnName\")?.let { kotlinx.serialization.json.Json.parseToJsonElement(it) }" else "kotlinx.serialization.json.Json.parseToJsonElement(getString(\"$columnName\"))"
-            "Vector" -> if (isNullable) "getString(\"$columnName\")?.let { Vector.parse(it) }" else "Vector.parse(getString(\"$columnName\"))"
+            "Vector" -> if (isNullable) "getString(\"$columnName\")?.let { parseVector(it) }" else "parseVector(getString(\"$columnName\"))"
             "FloatArray" -> if (isNullable) "getString(\"$columnName\")?.let { parseFloatArray(it) }" else "parseFloatArray(getString(\"$columnName\"))"
             else -> if (isNullable) "getString(\"$columnName\")" else "getString(\"$columnName\") ?: \"\""
         }
@@ -299,7 +1110,7 @@ object ResultSetGenerator {
             "kotlinx.datetime.LocalTime" -> if (isNullable) "getTime($index)?.toKotlinLocalTime()" else "getTime($index).toKotlinLocalTime()"
             "kotlin.uuid.Uuid" -> if (isNullable) "getString($index)?.let { kotlin.uuid.Uuid.parse(it) }" else "kotlin.uuid.Uuid.parse(getString($index))"
             "kotlinx.serialization.json.JsonElement" -> if (isNullable) "getString($index)?.let { kotlinx.serialization.json.Json.parseToJsonElement(it) }" else "kotlinx.serialization.json.Json.parseToJsonElement(getString($index))"
-            "Vector" -> if (isNullable) "getString($index)?.let { Vector.parse(it) }" else "Vector.parse(getString($index))"
+            "Vector" -> if (isNullable) "getString($index)?.let { parseVector(it) }" else "parseVector(getString($index))"
             "FloatArray" -> if (isNullable) "getString($index)?.let { parseFloatArray(it) }" else "parseFloatArray(getString($index))"
             else -> if (isNullable) "getString($index)" else "getString($index) ?: \"\""
         }
@@ -352,17 +1163,53 @@ object ResultSetGenerator {
             appendLine("        .toFloatArray()")
             appendLine("}")
             appendLine()
+            
+            // Vector parsing for Vector wrapper types
+            appendLine("private fun parseVector(vectorString: String): Vector {")
+            appendLine("    val floats = vectorString")
+            appendLine("        .removePrefix(\"[\").removeSuffix(\"]\")")
+            appendLine("        .split(\",\")")
+            appendLine("        .map { it.trim().toFloat() }")
+            appendLine("    return Vector.of(floats)")
+            appendLine("}")
+            appendLine()
+            
+            // Smart column getter that tries multiple alias formats
+            appendLine("private fun <T> ResultSet.tryGetColumn(columnNames: List<String>, getter: (String) -> T): T {")
+            appendLine("    for (columnName in columnNames) {")
+            appendLine("        try {")
+            appendLine("            return getter(columnName)")
+            appendLine("        } catch (e: SQLException) {")
+            appendLine("            // Column not found, try next alias")
+            appendLine("            continue")
+            appendLine("        }")
+            appendLine("    }")
+            appendLine("    throw SQLException(\"None of the column aliases found: \${columnNames.joinToString(\", \")}\")")
+            appendLine("}")
+            appendLine()
         }
     }
+    
+
+    
+    // Dynamic extraction removed - not needed since we generate specific extraction methods
     
     /**
      * Get required imports for ResultSet parsing
      */
-    fun getRequiredImports(): Set<String> {
-        return setOf(
+    fun getRequiredImports(table: SQLTableInfo): Set<String> {
+        val imports = mutableSetOf(
             "java.sql.ResultSet",
             "java.sql.PreparedStatement",
-            "java.sql.SQLException"
+            "java.sql.SQLException",
+            "java.sql.Timestamp",
+            "java.sql.Date", 
+            "java.sql.Time"
         )
+        
+        // Always add Vector import since parseVector utility function is always generated
+        imports.add("dev.gabrielolv.kotsql.vector.Vector")
+        
+        return imports
     }
 } 

@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "dev.gabrielolv"
-version = "0.42.0"
+version = "0.69.0"
 
 repositories {
     mavenCentral()
@@ -57,6 +57,13 @@ tasks.named("processResources") {
     dependsOn("generateVersionProperties")
 }
 
+// Make sure the version file is generated before creating sources jar
+tasks.withType<Jar> {
+    if (name == "sourcesJar") {
+        dependsOn("generateVersionProperties")
+    }
+}
+
 // KSP Configuration is now handled by the KotSQL plugin
 // Example usage in a consuming project:
 // kotsql {
@@ -72,6 +79,11 @@ tasks.named("processResources") {
 //     migrationDirectory.set("migrations")
 //     // previousSchemaPath.set("src/main/resources/previous_schema.sql")
 // }
+
+// Configure sources jar
+java {
+    withSourcesJar()
+}
 
 // Gradle Plugin Configuration
 gradlePlugin {

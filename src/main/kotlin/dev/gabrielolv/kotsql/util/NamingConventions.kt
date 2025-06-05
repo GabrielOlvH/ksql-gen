@@ -116,4 +116,42 @@ object NamingConventions {
     fun generateColumnsObjectName(): String {
         return "Columns"
     }
+    
+    /**
+     * Convert SQL table name to camelCase property name (singular)
+     * Examples: users -> user, user_profiles -> userProfile
+     */
+    fun tableNameToPropertyName(tableName: String): String {
+        val className = tableNameToClassName(tableName)
+        return className.replaceFirstChar { it.lowercase() }
+    }
+    
+    /**
+     * Convert SQL table name to camelCase property name (plural)
+     * Examples: users -> users, user_profiles -> userProfiles, category -> categories
+     */
+    fun tableNameToPluralPropertyName(tableName: String): String {
+        val propertyName = tableNameToPropertyName(tableName)
+        
+        // Simple pluralization rules
+        return when {
+            // If already plural (ends with 's' but not special cases), keep as is
+            propertyName.endsWith("s") && !propertyName.endsWith("ss") && 
+                !propertyName.endsWith("us") && !propertyName.endsWith("is") -> {
+                propertyName
+            }
+            propertyName.endsWith("y") && propertyName.length > 1 && 
+                !listOf('a', 'e', 'i', 'o', 'u').contains(propertyName[propertyName.length - 2]) -> {
+                propertyName.dropLast(1) + "ies"
+            }
+            propertyName.endsWith("ss") || 
+            propertyName.endsWith("sh") || 
+            propertyName.endsWith("ch") || 
+            propertyName.endsWith("x") || 
+            propertyName.endsWith("z") -> {
+                propertyName + "es"
+            }
+            else -> propertyName + "s"
+        }
+    }
 } 
