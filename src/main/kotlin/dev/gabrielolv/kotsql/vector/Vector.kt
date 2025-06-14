@@ -11,12 +11,12 @@ import kotlin.math.sqrt
 @JvmInline
 @Serializable(with = VectorSerializer::class)
 value class Vector(val values: FloatArray) {
-    
+
     /**
      * Get the dimension (number of components) of this vector
      */
     val dimension: Int get() = values.size
-    
+
     /**
      * Compute dot product with another vector
      * @throws IllegalArgumentException if dimensions don't match
@@ -27,14 +27,14 @@ value class Vector(val values: FloatArray) {
         }
         return values.zip(other.values).sumOf { (a, b) -> (a * b).toDouble() }.toFloat()
     }
-    
+
     /**
      * Calculate the magnitude (Euclidean norm) of this vector
      */
     fun magnitude(): Float {
         return sqrt(values.sumOf { (it * it).toDouble() }.toFloat())
     }
-    
+
     /**
      * Normalize this vector to unit length
      * @return normalized vector, or zero vector if magnitude is zero
@@ -47,7 +47,7 @@ value class Vector(val values: FloatArray) {
             Vector(values.map { it / mag }.toFloatArray())
         }
     }
-    
+
     /**
      * Calculate Euclidean distance (L2 distance) to another vector
      * @throws IllegalArgumentException if dimensions don't match
@@ -56,11 +56,11 @@ value class Vector(val values: FloatArray) {
         require(dimension == other.dimension) {
             "Vector dimensions must match: $dimension != ${other.dimension}"
         }
-        return sqrt(values.zip(other.values).sumOf { (a, b) -> 
-            (a - b).toDouble().pow(2) 
+        return sqrt(values.zip(other.values).sumOf { (a, b) ->
+            (a - b).toDouble().pow(2)
         }.toFloat())
     }
-    
+
     /**
      * Calculate cosine distance to another vector (1 - cosine similarity)
      * @throws IllegalArgumentException if dimensions don't match
@@ -68,7 +68,7 @@ value class Vector(val values: FloatArray) {
     fun cosineDistance(other: Vector): Float {
         return 1f - cosineSimilarity(other)
     }
-    
+
     /**
      * Calculate cosine similarity with another vector
      * @throws IllegalArgumentException if dimensions don't match
@@ -78,20 +78,20 @@ value class Vector(val values: FloatArray) {
         require(dimension == other.dimension) {
             "Vector dimensions must match: $dimension != ${other.dimension}"
         }
-        
+
         val dotProd = dotProduct(other)
         val magnitudes = magnitude() * other.magnitude()
-        
+
         return if (magnitudes == 0f) 0f else dotProd / magnitudes
     }
-    
+
     /**
      * Calculate negative inner product (for pgvector <#> operator)
      */
     fun negativeInnerProduct(other: Vector): Float {
         return -dotProduct(other)
     }
-    
+
     /**
      * Validate that this vector contains only valid float values
      * @throws IllegalStateException if vector contains NaN or infinity
@@ -104,7 +104,7 @@ value class Vector(val values: FloatArray) {
             }
         }
     }
-    
+
     /**
      * Check if this vector is normalized (unit vector)
      * @param tolerance allowed tolerance for magnitude comparison
@@ -113,7 +113,11 @@ value class Vector(val values: FloatArray) {
         val mag = magnitude()
         return kotlin.math.abs(mag - 1f) <= tolerance
     }
-    
+
+    override fun toString(): String {
+        return values.joinToString(prefix = "[", postfix = "]", separator = ", ")
+    }
+
     companion object {
         /**
          * Create a vector from vararg float values
@@ -121,14 +125,14 @@ value class Vector(val values: FloatArray) {
         fun of(vararg values: Float): Vector {
             return Vector(values)
         }
-        
+
         /**
          * Create a vector from a list of float values
          */
         fun of(values: List<Float>): Vector {
             return Vector(values.toFloatArray())
         }
-        
+
         /**
          * Create a zero vector of specified dimension
          */
@@ -136,7 +140,7 @@ value class Vector(val values: FloatArray) {
             require(dimension > 0) { "Vector dimension must be positive" }
             return Vector(FloatArray(dimension) { 0f })
         }
-        
+
         /**
          * Create a random vector of specified dimension
          * @param dimension vector dimension
@@ -145,11 +149,11 @@ value class Vector(val values: FloatArray) {
         fun random(dimension: Int, range: ClosedFloatingPointRange<Float> = -1f..1f): Vector {
             require(dimension > 0) { "Vector dimension must be positive" }
             val rangeSize = range.endInclusive - range.start
-            return Vector(FloatArray(dimension) { 
-                range.start + kotlin.random.Random.nextFloat() * rangeSize 
+            return Vector(FloatArray(dimension) {
+                range.start + kotlin.random.Random.nextFloat() * rangeSize
             })
         }
-        
+
         /**
          * Create a unit vector of specified dimension
          * @param dimension vector dimension
@@ -159,4 +163,4 @@ value class Vector(val values: FloatArray) {
             return random(dimension).normalize()
         }
     }
-} 
+}

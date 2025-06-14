@@ -182,18 +182,15 @@ object ResultSetGenerator {
                 else -> {}
             }
         }
-//
-//        // Generate conditions for OneToMany relationships where this table is the parent
-//        incomingRels.filterIsInstance<dev.gabrielolv.kotsql.model.RelationshipInfo.OneToMany>().forEach { rel ->
-//            // Only generate Children methods if this table is the parent (fromTable) in the OneToMany relationship
-//            if (rel.fromTable == table.tableName) {
-//                val relatedTable = rel.toTable
-//                if (!conditionsGenerated.contains(relatedTable)) {
-//                    appendLine("            availableTables.contains(\"${relatedTable}\") -> to${className}ListWith${NamingConventions.tableNameToClassName(relatedTable)}Children()")
-//                    conditionsGenerated.add(relatedTable)
-//                }
-//            }
-//        }
+        
+        // Generate conditions for OneToMany relationships where this table is the parent (outgoing)
+        outgoingRels.filterIsInstance<dev.gabrielolv.kotsql.model.RelationshipInfo.OneToMany>().forEach { rel ->
+            val relatedTable = rel.toTable
+            if (!conditionsGenerated.contains(relatedTable)) {
+                appendLine("            availableTables.contains(\"${relatedTable}\") -> to${className}ListWith${NamingConventions.tableNameToClassName(relatedTable)}Children()")
+                conditionsGenerated.add(relatedTable)
+            }
+        }
 
         // Handle many-to-many relationships
         val manyToManyRels = relationships.relationships.filterIsInstance<dev.gabrielolv.kotsql.model.RelationshipInfo.ManyToMany>()
@@ -270,14 +267,11 @@ object ResultSetGenerator {
         }
         
         // Generate methods for incoming OneToMany relationships
-        incomingRels.filterIsInstance<dev.gabrielolv.kotsql.model.RelationshipInfo.OneToMany>().forEach { rel ->
-            // Only generate Children methods if this table is the parent (fromTable) in the OneToMany relationship
-            if (rel.fromTable == table.tableName) {
-                val methodName = "to${className}ListWith${NamingConventions.tableNameToClassName(rel.toTable)}Children"
+        outgoingRels.filterIsInstance<dev.gabrielolv.kotsql.model.RelationshipInfo.OneToMany>().forEach { rel ->
+            val methodName = "to${className}ListWith${NamingConventions.tableNameToClassName(rel.toTable)}Children"
             if (!generatedMethods.contains(methodName)) {
-                generateIncomingRelationshipMethod(table, className, rel, allTables)
+                generateIncomingRelationshipMethod(table, className, rel, relationships, allTables)
                 generatedMethods.add(methodName)
-                }
             }
         }
         
@@ -309,6 +303,20 @@ object ResultSetGenerator {
         // Collect all related table names
         relationships.getOutgoingRelationships(table.tableName).forEach { rel ->
             relatedTables.add(rel.toTable)
+
+            // If this is a OneToMany child, also include its outgoing ManyToOne/OneToOne tables
+            if (rel is dev.gabrielolv.kotsql.model.RelationshipInfo.OneToMany) {
+                val childOutgoing = relationships.getOutgoingRelationships(rel.toTable)
+                childOutgoing.forEach { childRel ->
+                    when (childRel) {
+                        is dev.gabrielolv.kotsql.model.RelationshipInfo.ManyToOne,
+                        is dev.gabrielolv.kotsql.model.RelationshipInfo.OneToOne -> {
+                            relatedTables.add(childRel.toTable)
+                        }
+                        else -> {}
+                    }
+                }
+            }
         }
         
         relationships.getIncomingRelationships(table.tableName).forEach { rel ->
@@ -384,15 +392,16 @@ object ResultSetGenerator {
         table: SQLTableInfo,
         className: String,
         relationship: dev.gabrielolv.kotsql.model.RelationshipInfo.OneToMany,
+        relationships: SchemaRelationships,
         allTables: List<SQLTableInfo>?
     ) {
-        val relatedClassName = NamingConventions.tableNameToClassName(relationship.fromTable)
+        val relatedClassName = NamingConventions.tableNameToClassName(relationship.toTable)
         val methodName = "to${className}ListWith${relatedClassName}Children"
-        val relationshipPropertyName = NamingConventions.tableNameToPluralPropertyName(relationship.fromTable)
+        val relationshipPropertyName = NamingConventions.tableNameToPluralPropertyName(relationship.toTable)
         
         appendLine("/**")
-        appendLine(" * Parse $className list with ${relationship.fromTable} children populated")
-        appendLine(" * Groups related ${relationship.fromTable} records by parent $className")
+        appendLine(" * Parse $className list with ${relationship.toTable} children populated")
+        appendLine(" * Groups related ${relationship.toTable} records by parent $className")
         appendLine(" */")
         appendLine("private fun ResultSet.${methodName}(): List<$className> {")
         appendLine("    val parentMap = mutableMapOf<String, $className>()")
@@ -419,7 +428,25 @@ object ResultSetGenerator {
         appendLine("        ")
         appendLine("        // Parse child entity if present")
         appendLine("        try {")
-        appendLine("            val child = extract${relatedClassName}FromResultSet()")
+        appendLine("            var child = extract${relatedClassName}FromResultSet()")
+
+        // Populate child's outgoing ManyToOne / OneToOne relationships if available in ResultSet
+        val childOutgoing = relationships.getOutgoingRelationships(relationship.toTable)
+        childOutgoing.forEach { relOut ->
+            when (relOut) {
+                is dev.gabrielolv.kotsql.model.RelationshipInfo.ManyToOne,
+                is dev.gabrielolv.kotsql.model.RelationshipInfo.OneToOne -> {
+                    val targetClass = NamingConventions.tableNameToClassName(relOut.toTable)
+                    val propertyName = NamingConventions.tableNameToPropertyName(relOut.toTable)
+                    appendLine("            try {")
+                    appendLine("                val related$targetClass = extract${targetClass}FromResultSet()")
+                    appendLine("                child = child.copy($propertyName = related$targetClass)")
+                    appendLine("            } catch (e: Exception) { }")
+                }
+                else -> {}
+            }
+        }
+
         appendLine("            childrenMap[parentKey]?.add(child)")
         appendLine("        } catch (e: Exception) {")
         appendLine("            // Child data might be null or missing, skip")

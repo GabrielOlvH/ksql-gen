@@ -108,7 +108,11 @@ object RelationshipDetector {
             
             foreignKeyColumns.size == 2 && 
                 primaryKeyColumns.size >= 2 &&
-                foreignKeyColumns.all { fk -> primaryKeyColumns.any { pk -> pk.columnName == fk.columnName } }
+                foreignKeyColumns.all { fk -> primaryKeyColumns.any { pk -> pk.columnName == fk.columnName } } &&
+                // Exclude tables that have additional non-key, non-foreign-key columns (e.g., quantity, price)
+                table.columns.none { col ->
+                    !col.isPrimaryKey && col.referencedTableName == null
+                }
         }
     }
     

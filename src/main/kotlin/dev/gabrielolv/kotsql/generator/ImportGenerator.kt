@@ -79,6 +79,20 @@ object ImportGenerator {
             // Get outgoing relationships (this table references others)
             relationships.getOutgoingRelationships(table.tableName).forEach { rel ->
                 allRelatedTables.add(rel.toTable)
+
+                // If this is a OneToMany (parent->child), include child's outgoing ManyToOne / OneToOne targets
+                if (rel is dev.gabrielolv.kotsql.model.RelationshipInfo.OneToMany) {
+                    val childOutgoing = relationships.getOutgoingRelationships(rel.toTable)
+                    childOutgoing.forEach { childRel ->
+                        when (childRel) {
+                            is dev.gabrielolv.kotsql.model.RelationshipInfo.ManyToOne,
+                            is dev.gabrielolv.kotsql.model.RelationshipInfo.OneToOne -> {
+                                allRelatedTables.add(childRel.toTable)
+                            }
+                            else -> {}
+                        }
+                    }
+                }
             }
             
             // Get incoming relationships (other tables reference this table)
